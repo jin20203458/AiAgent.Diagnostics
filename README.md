@@ -136,11 +136,18 @@ AiDebugLogger.SaveSnapshot("CurrentSystemState", myStateObject);
 
 ## 🤖 AI 에이전트를 위한 디버깅 가이드 (Prompting)
 
-AI 에이전트와 페어 프로그래밍을 하거나 분석을 시킬 때, 아래 지침을 복사하여 전달하면 효과적으로 문제의 원인을 추적합니다.
+AI 에이전트와 페어 프로그래밍을 하거나 자율 디버깅을 시킬 때, 아래의 디버깅 프로토콜을 에이전트에게 지시하여 활용하게 하세요.
 
-> "이 프로젝트에는 `AiAgent.Diagnostics` 관찰(Observability) 파이프라인이 탑재되어 있습니다. 
+> **[AI 에이전트 전용 디버깅 지침]**
 > 
-> **디버깅 프로토콜:**
-> 1. 기능 테스트나 예외 발생 시, 프로젝트 루트의 `ai_debug.jsonl` 파일에서 오류 및 관련 이벤트를 확인하세요.
-> 2. `ai_debug.jsonl`에 기록된 로그에는 호출 스택 추적을 위해 `caller` 필드(파일명, 라인 수, 메서드명)가 구조화되어 제공됩니다.
-> 3. 직렬화된 데이터나 거대한 XML 조각은 외부 파일로 분리되어 `blobPath` 필드에 명시되고 `ai_dumps/` 디렉터리에 저장됩니다. 이 경로의 파일을 읽어 변환 과정을 분석하세요."
+> 이 프로젝트에는 고성능 비침투적 관찰(Observability) 파이프라인인 `AiAgent.Diagnostics`가 탑재되어 있습니다. 분석 및 디버깅 작업을 진행할 때는 아래 2단계의 프로토콜을 준수하세요.
+> 
+> **1단계: 진단 코드 삽입 (Instrumentation)**
+> * 분석하려는 비즈니스 기능이나 버그 의심 구역의 주요 데이터 흐름 및 분기점 전후에 로그를 발행하는 코드를 먼저 심으세요.
+> * **비즈니스 프로젝트 파일 수정 시**: 강한 의존성을 피하기 위해 클래스 내부에 `private static readonly DiagnosticSource _diagnosticSource = new DiagnosticListener("이름");`을 정의하고 `_diagnosticSource.Write(...)` 형태로 이벤트를 비침투적으로 발행하세요.
+> * **스크립트 및 임시 테스트 코드 수정 시**: `AiDebugLogger.Log()` 또는 `AiDebugLogger.Dump()`를 직접 사용하여 빠르게 추적할 수 있습니다.
+> 
+> **2단계: 수집 결과 확인 및 분석 (Collection & Analysis)**
+> * 코드를 빌드하고 실행(혹은 테스트)한 후, 프로젝트 루트에 누적되는 `ai_debug.jsonl` 파일과 `ai_dumps/` 폴더를 확인하여 로그를 수집하세요.
+> * `ai_debug.jsonl` 내부 로그 객체에는 호출 파일명, 라인 번호, 메서드명이 포함된 `caller` 필드가 제공되므로 이를 활용해 의심 지점의 코드로 바로 이동하여 분석하세요.
+> * 데이터 덤프 중 크기가 10KB를 초과하는 객체나 XML/JSON 조각은 가독성을 위해 외부 파일로 분리 정렬되어 `blobPath` 필드에 연결되어 있습니다. `ai_dumps/` 아래의 해당 덤프 파일을 직접 읽고 변환 전후 상태를 교차 분석하세요.
