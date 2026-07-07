@@ -132,6 +132,40 @@ using (AiDebugLogger.BeginScope("DbQueryScope"))
 AiDebugLogger.SaveSnapshot("CurrentSystemState", myStateObject);
 ```
 
+## 📦 다른 프로젝트에 서브모듈로 추가하기
+
+이 라이브러리는 독립 GitHub 저장소로 관리되므로, 어떤 .NET 8+ 프로젝트에도 서브모듈로 불러와 재사용할 수 있습니다.
+
+```bash
+# 1. 서브모듈 등록 (프로젝트 루트에서 실행)
+git submodule add https://github.com/jin20203458/AiAgent.Diagnostics.git AiAgent.Diagnostics
+
+# 2. 기존 저장소를 클론할 때 서브모듈 함께 받기
+git clone --recurse-submodules <저장소 URL>
+
+# 3. 이미 클론된 저장소에서 서브모듈 초기화
+git submodule update --init --recursive
+```
+
+이후 사용하는 프로젝트의 `.csproj`에 아래 참조를 추가합니다.
+
+```xml
+<ItemGroup>
+  <ProjectReference Include="..\AiAgent.Diagnostics\AiAgent.Diagnostics.csproj" />
+</ItemGroup>
+```
+
+---
+
+## 📌 핵심 API 비교 (`Log` vs `Dump`)
+
+| 구분 | `AiDebugLogger.Log` | `AiDebugLogger.Dump` |
+| :--- | :--- | :--- |
+| **기록 대상** | 짧은 텍스트 메시지 | 클래스 인스턴스, XML, JSON 등 복잡한 객체 전체 |
+| **데이터 크기** | 매우 작음 (1KB 미만) | 수 KB ~ 수 MB |
+| **저장 방식** | `ai_debug.jsonl` 내부에 텍스트로 직접 저장 | 10KB 미만: 로그에 인라인 저장 / 10KB 초과: `ai_dumps/`에 파일 분리 |
+| **주요 용도** | 실행 흐름 및 단계 기록 | 버그 시점의 데이터 상태 전체 촬영 |
+
 ---
 
 ## 🤖 AI 에이전트를 위한 디버깅 가이드 (Prompting)
@@ -143,11 +177,21 @@ AI 에이전트와 페어 프로그래밍을 하거나 자율 디버깅을 시�
 > 이 프로젝트에는 고성능 비침투적 관찰(Observability) 파이프라인인 `AiAgent.Diagnostics`가 탑재되어 있습니다. 분석 및 디버깅 작업을 진행할 때는 아래 2단계의 프로토콜을 준수하세요.
 > 
 > **1단계: 진단 코드 삽입 (Instrumentation)**
-> * 분석하려는 비즈니스 기능이나 버그 의심 구역의 주요 데이터 흐름 및 분기점 전후에 로그를 발행하는 코드를 먼저 심으세요.
-> * **비즈니스 프로젝트 파일 수정 시**: 강한 의존성을 피하기 위해 클래스 내부에 `private static readonly DiagnosticSource _diagnosticSource = new DiagnosticListener("이름");`을 정의하고 `_diagnosticSource.Write(...)` 형태로 이벤트를 비침투적으로 발행하세요.
-> * **스크립트 및 임시 테스트 코드 수정 시**: `AiDebugLogger.Log()` 또는 `AiDebugLogger.Dump()`를 직접 사용하여 빠르게 추적할 수 있습니다.
+> * 분석하려는 버그 의심 구역의 주요 데이터 흐름 및 분기점 전후에 아래 함수를 삽입하세요.
+> * **비즈니스 프로젝트 파일 수정 시**: 클래스 내부에 `private static readonly DiagnosticSource _diagnosticSource = new DiagnosticListener("이름");`을 정의하고 `_diagnosticSource.Write(...)` 형태로 이벤트를 비침투적으로 발행하세요.
+> * **스크립트 및 임시 테스트 코드 수정 시**: 아래 함수를 직접 사용하여 빠르게 추적하세요.
+> 
+> | 상황 | 사용 함수 | 예시 |
+> | :--- | :--- | :--- |
+> | 특정 변수나 객체의 상태를 파일로 뽑아보고 싶을 때 **(가장 자주 사용)** | `AiDebugLogger.Dump("라벨", 변수)` | `AiDebugLogger.Dump("OrderData", order);` |
+> | 실행 흐름 단계를 한 줄로 기록하고 싶을 때 | `AiDebugLogger.Log("메시지")` | `AiDebugLogger.Log("결제 시작됨", "INFO");` |
+> | 특정 구간의 소요 시간(성능 병목)을 측정하고 싶을 때 | `using (AiDebugLogger.BeginScope("이름"))` | `using (AiDebugLogger.BeginScope("ParsePhase")) { ... }` |
+> | 반복문 내 매 회차 상태 변화를 기록하고 싶을 때 | `AiDebugLogger.SaveSnapshot("라벨_인덱스", 객체)` | `AiDebugLogger.SaveSnapshot($"TableState_{i}", table);` |
+> | try-catch 내에서 예외 세부 정보를 안전하게 기록하고 싶을 때 | `AiDebugLogger.Dump("라벨", ex)` | `catch (Exception ex) { AiDebugLogger.Dump("ApiError", ex); }` |
 > 
 > **2단계: 수집 결과 확인 및 분석 (Collection & Analysis)**
 > * 코드를 빌드하고 실행(혹은 테스트)한 후, 프로젝트 루트에 누적되는 `ai_debug.jsonl` 파일과 `ai_dumps/` 폴더를 확인하여 로그를 수집하세요.
 > * `ai_debug.jsonl` 내부 로그 객체에는 호출 파일명, 라인 번호, 메서드명이 포함된 `caller` 필드가 제공되므로 이를 활용해 의심 지점의 코드로 바로 이동하여 분석하세요.
 > * 데이터 덤프 중 크기가 10KB를 초과하는 객체나 XML/JSON 조각은 가독성을 위해 외부 파일로 분리 정렬되어 `blobPath` 필드에 연결되어 있습니다. `ai_dumps/` 아래의 해당 덤프 파일을 직접 읽고 변환 전후 상태를 교차 분석하세요.
+> * **디버깅이 완료된 후, 임시로 삽입한 진단 코드는 반드시 제거하고 커밋하세요.**
+
