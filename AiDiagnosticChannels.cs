@@ -61,8 +61,8 @@ namespace AiAgent.Diagnostics
             {
                 try
                 {
-                    // Wait for all remaining items to be drained from the channel
-                    await localTask;
+                    // Wait at most 300ms for remaining items to be drained from the channel
+                    await Task.WhenAny(localTask, Task.Delay(300)).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
