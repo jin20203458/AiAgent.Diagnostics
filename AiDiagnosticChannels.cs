@@ -15,14 +15,26 @@ namespace AiAgent.Diagnostics
     /// </summary>
     public static class AiDiagnosticChannels
     {
+        /// <summary>
+        /// 진단 이벤트를 비동기적으로 버퍼링하는 무제한 단일 소비자 채널입니다.
+        /// </summary>
         private static readonly Channel<AiDiagnosticEvent> _channel = Channel.CreateUnbounded<AiDiagnosticEvent>(
             new UnboundedChannelOptions
             {
                 SingleReader = true
             });
 
+        /// <summary>
+        /// 채널 큐에서 이벤트를 읽어 파일로 기록하는 백그라운드 처리 태스크입니다.
+        /// </summary>
         private static Task? _processingTask;
+        /// <summary>
+        /// 백그라운드 큐 소비 루프를 중지시키기 위한 취소 토큰 소스입니다.
+        /// </summary>
         private static CancellationTokenSource? _cts;
+        /// <summary>
+        /// 채널 백그라운드 워커가 시작되었는지 여부를 나타냅니다.
+        /// </summary>
         private static bool _isStarted = false;
 
         /// <summary>

@@ -10,7 +10,13 @@ namespace AiAgent.Diagnostics
     /// </summary>
     public class AiDiagnosticObserver : IObserver<DiagnosticListener>
     {
+        /// <summary>
+        /// 전역 <see cref="DiagnosticListener.AllListeners"/> 구독 핸들입니다.
+        /// </summary>
         private static IDisposable? _allListenersSubscription;
+        /// <summary>
+        /// 활성화된 개별 리스너 구독 핸들들을 보관하는 스레드 안전 컬렉션입니다.
+        /// </summary>
         private static readonly ConcurrentBag<IDisposable> _subscriptions = new ConcurrentBag<IDisposable>();
 
         /// <summary>
@@ -69,6 +75,9 @@ namespace AiAgent.Diagnostics
         /// </summary>
         private class InnerEventObserver : IObserver<System.Collections.Generic.KeyValuePair<string, object?>>
         {
+            /// <summary>
+            /// 현재 구독 중인 <see cref="DiagnosticListener"/>의 이름입니다.
+            /// </summary>
             private readonly string _listenerName;
 
             /// <summary>

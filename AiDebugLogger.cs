@@ -193,11 +193,29 @@ namespace AiAgent.Diagnostics
         /// </summary>
         private class LogScope : IDisposable
         {
+            /// <summary>
+            /// 측정 중인 작업 범위의 이름입니다.
+            /// </summary>
             private readonly string _scopeName;
+            /// <summary>
+            /// 범위를 시작한 호출자 소스 파일 경로입니다.
+            /// </summary>
             private readonly string _filePath;
+            /// <summary>
+            /// 범위를 시작한 호출자 소스 라인 번호입니다.
+            /// </summary>
             private readonly int _lineNumber;
+            /// <summary>
+            /// 범위를 시작한 호출자 메서드 또는 멤버 이름입니다.
+            /// </summary>
             private readonly string _memberName;
+            /// <summary>
+            /// 범위 실행 소요 시간을 측정하는 스톱워치입니다.
+            /// </summary>
             private readonly Stopwatch _stopwatch;
+            /// <summary>
+            /// 범위 객체가 이미 해제되었는지 여부를 나타냅니다.
+            /// </summary>
             private bool _disposed = false;
 
             /// <summary>
