@@ -1,197 +1,174 @@
-# AiAgent.Diagnostics
+# AiAgent.Diagnostics — Non-Intrusive Asynchronous Telemetry & Diagnostics Library
 
-AI 에이전트가 소프트웨어를 자율적으로 디버깅하고 코드를 분석할 수 있도록 최적화된 **C#/.NET 고성능 스마트 진단 라이브러리**입니다.
+본 저장소는 **.NET 8.0** 애플리케이션의 실행 흐름, 상태 스냅샷, 대용량 페이로드 덤프를 호출 스레드(WPF STA UI 스레드 등) 차단 없이 수집·직렬화하는 고성능 비동기 진단 텔레메트리 라이브러리입니다.
 
-이 라이브러리는 비즈니스 도메인 코드를 오염시키지 않는 **비침투적 이벤트 설계(DiagnosticSource)**와 호출 스레드를 방해하지 않는 **논블로킹 비동기 큐(Channels)**를 결합하여 구현되었습니다.
-
----
-
-## 🌟 핵심 기능
-
-1. **비침투적 설계 (Decoupled Logging)**
-   * 비즈니스 로직 코드 내부에서 로깅 라이브러리를 직접 참조하여 강하게 결합하지 않습니다.
-   * .NET 표준 `System.Diagnostics.DiagnosticSource`를 사용해 이벤트를 발행(Publish)하면, 전역 리스너(`AiDiagnosticObserver`)가 이를 구독하여 안전하게 적재합니다.
-
-2. **비동기 논블로킹 채널 (Async Processing)**
-   * `System.Threading.Channels` 기반의 단일 소비자(Single Reader) 큐를 사용합니다.
-   * 무거운 객체 직렬화(Serialization) 및 디스크 I/O 작업이 백그라운드 스레드에서 비동기 처리되므로, WPF UI 등의 메인 스레드가 절대 정지(Freezing)되지 않습니다.
-
-3. **스마트 데이터 분리 (Blob Offloading)**
-   * AI 에이전트의 컨텍스트 윈도우(Context Window) 한계를 초과하는 대용량 데이터(예: 수만 라인의 XML, 큰 JSON 데이터 구조 등)를 식별합니다.
-   * **10KB를 초과하는 데이터**는 로그 라인에 집어넣지 않고, `ai_dumps/` 디렉터리에 독립된 파일(`.xml`, `.json`)로 자동 분리 저장하고 참조 경로만 남겨 로그를 깨끗하게 유지합니다.
-   * XML 데이터는 읽기 좋게 들여쓰기 정렬(Pretty Print)을 자동 수행하여 AI 에이전트의 가독성을 극대화합니다.
-
-4. **구조화된 로그 포맷 (JSON Lines)**
-   * 로그는 줄바꿈 단위의 JSON 포맷(`ai_debug.jsonl`)으로 누적 저장됩니다.
-   * 타임스탬프, 레벨, 스코프, 소요 시간, 호출 부모 정보(파일명, 행 번호, 호출 메서드명)가 상세히 파싱되어 AI 에이전트가 즉각 소스 코드 내 오류 발생 위치로 이동할 수 있습니다.
+도메인 계층의 결합도를 낮추는 `.NET DiagnosticSource` 기반 비침투적 이벤트 구독(`AiDiagnosticObserver`)과 `System.Threading.Channels` 단일 소비자 큐(`AiDiagnosticChannels`)를 결합하여, AI 에이전트 및 개발자가 런타임 상태를 정밀하게 역추적할 수 있는 구조화된 JSON Lines(`ai_debug.jsonl`) 로그를 생성합니다.
 
 ---
 
-## 🛠️ 설치 및 초기화
+## 아키텍처 하이라이트 (Architecture Highlights)
 
-### 1. 파이프라인 시작 및 옵저버 등록 (앱 Startup)
-애플리케이션 시작 시점에 백그라운드 채널 워커를 시작하고, 이벤트를 모니터링할 옵저버를 등록합니다.
+* **Non-Blocking Channel Pipeline**: `Channel.CreateUnbounded<AiDiagnosticEvent>(SingleReader = true)` 기반 백그라운드 전용 워커가 객체 직렬화 및 디스크 I/O를 전담하여 메인/UI 스레드 프리징 원천 차단
+* **Decoupled Observability**: 비즈니스 로직에서 로거를 직접 참조하지 않고 표준 `System.Diagnostics.DiagnosticListener`로 발행한 이벤트를 `AiDiagnosticObserver`가 자동 수집·변환
+* **Context-Aware Blob Offloading**: 직렬화된 페이로드가 **10KB(`10,240 bytes`)**를 초과할 경우 `ai_debug.jsonl` 인라인 기록 대신 `ai_dumps/` 하위 개별 파일(`.json`, Pretty-Printed `.xml`)로 자동 분리 저장하고 `blobPath` 참조만 기록하여 로그 가독성 및 AI 컨텍스트 윈도우 효율성 보장
+* **Zero-Overhead Release Guard**: `AiDebugLogger`의 정적 계측 API(`Log`, `Dump`, `BeginScope`, `SaveSnapshot`)는 `#if DEBUG` 조건부 컴파일 및 싱글톤 `NullDisposable` 패턴을 통해 Release 빌드 시 런타임 할당 및 I/O 오버헤드를 제거
+* **Strict Telemetry Isolation**: 호스트 애플리케이션(예: [`ArqaStatic`](../README.md))에서 외부 정적 분석 엔진의 원시 입출력 스트림(`AnalysisTraceLogger`)과 애플리케이션 수명주기/AI 진단 텔레메트리를 물리적으로 분리
+
+---
+
+## 핵심 컴포넌트 (Core Components)
+
+| 클래스 | 파일 | 핵심 책임 |
+| :--- | :--- | :--- |
+| **`AiDebugLogger`** | [`AiDebugLogger.cs`](AiDebugLogger.cs) | 정적 계측 퍼사드(`Log`, `Dump`, `BeginScope`, `SaveSnapshot`) 및 호출자 소스 위치(`[CallerFilePath]`, `[CallerLineNumber]`, `[CallerMemberName]`) 자동 캡처 |
+| **`AiDiagnosticChannels`** | [`AiDiagnosticChannels.cs`](AiDiagnosticChannels.cs) | 무제한 단일 소비자 비동기 채널 큐잉, 10KB 임계치 기반 대용량 페이로드 분리(`ai_dumps/`), `ai_debug.jsonl` 비동기 파일 기록 및 Graceful Shutdown 플러시 |
+| **`AiDiagnosticObserver`** | [`AiDiagnosticObserver.cs`](AiDiagnosticObserver.cs) | 전역 `DiagnosticListener.AllListeners` 구독 및 익명/구조화 페이로드 리플렉션 추출기(`InnerEventObserver`) |
+| **`AiDiagnosticEvent`** | [`AiDiagnosticEvent.cs`](AiDiagnosticEvent.cs) | 타임스탬프, 로그 레벨, 스코프, 소요 시간(`DurationMs`), 호출자 메타데이터, 원본 페이로드를 담는 내부 이벤트 DTO |
+
+---
+
+## 수명주기 통합 및 사용법 (Lifecycle & API Usage)
+
+### 1. 애플리케이션 수명주기 연동 (`Startup` / `Exit`)
+
+애플리케이션 시작 시 백그라운드 채널 워커와 옵저버를 기동하고, 종료 시 큐에 남은 잔여 이벤트를 안전하게 플러시합니다.
 
 ```csharp
-// 예: App.xaml.cs (WPF Startup) 또는 Program.cs (Console/Web Startup)
+// App.xaml.cs (WPF) 또는 Program.cs
 protected override void OnStartup(StartupEventArgs e)
 {
     base.OnStartup(e);
 
-    #if DEBUG
-    // 로그가 저장될 베이스 디렉터리 경로 설정
+#if DEBUG
     AiAgent.Diagnostics.AiDebugLogger.BasePath = AppDomain.CurrentDomain.BaseDirectory;
-
-    // 파이프라인 워커 시작 및 진단 옵저버 등록
     AiAgent.Diagnostics.AiDiagnosticChannels.Start();
     AiAgent.Diagnostics.AiDiagnosticObserver.Register();
-    #endif
+#endif
 }
-```
 
-### 2. 잔여 로그 플러시 및 리스너 해제 (앱 Shutdown)
-애플리케이션이 종료될 때 메모리 버퍼/큐에 대기 중인 모든 잔여 로그가 디스크에 유실 없이 쓰이도록 보장(Graceful Shutdown)합니다.
-
-```csharp
 protected override void OnExit(ExitEventArgs e)
 {
-    #if DEBUG
+#if DEBUG
     try
     {
         AiAgent.Diagnostics.AiDiagnosticObserver.Unregister();
-        // 비동기 채널을 닫고, 남은 로그 쓰기 작업 완료 시까지 동기 대기
         AiAgent.Diagnostics.AiDiagnosticChannels.StopAsync().GetAwaiter().GetResult();
     }
     catch (Exception ex)
     {
-        System.Diagnostics.Debug.WriteLine($"Failed to stop AI debug pipeline: {ex.Message}");
+        System.Diagnostics.Debug.WriteLine($"[AiAgent.Diagnostics] Shutdown error: {ex.Message}");
     }
-    #endif
+#endif
     base.OnExit(e);
 }
 ```
 
----
+### 2. 계측 방식 A — 정적 퍼사드 호출 (`AiDebugLogger`)
 
-## 💻 사용 방법
+빠른 디버깅, 성능 구간 측정 및 상태 스냅샷 기록 시 사용합니다.
 
-### 방법 A. 비침투적 이벤트 발행 (추천: 도메인 로직 코드용)
-비즈니스 로직 소스 코드 내부에서는 진단 라이브러리를 직접 참조하지 않고, .NET 표준 API를 활용해 정보를 던집니다.
+```csharp
+using AiAgent.Diagnostics;
+
+// 1. 일반 실행 흐름 로깅
+AiDebugLogger.Log("분석 파이프라인 초기화 완료", level: "INFO", scope: "Pipeline");
+
+// 2. 구간 소요 시간(ms) 자동 측정 (Dispose 시 END 이벤트 및 DurationMs 기록)
+using (AiDebugLogger.BeginScope("CtuAstGeneration"))
+{
+    // 3. 임의 객체 또는 XML/JSON 문자열 덤프 (10KB 초과 시 ai_dumps/ 파일로 자동 분리)
+    AiDebugLogger.Dump("CompileArguments", argsList, scope: "CTU");
+}
+
+// 4. 특정 시점의 상태 스냅샷 기록
+AiDebugLogger.SaveSnapshot("PresetSyncState", currentPresetModel);
+```
+
+### 3. 계측 방식 B — 비침투적 이벤트 발행 (`DiagnosticListener`)
+
+도메인 서비스 계층에서 `AiAgent.Diagnostics` 어셈블리 직접 참조 없이 표준 `.NET` API로 이벤트를 발행합니다 (`ArqaStatic*` 또는 `AiAgent.Diagnostics*` 접두사 리스너 자동 구독).
 
 ```csharp
 using System.Diagnostics;
 
 public class ReportGenerator
 {
-    // 클래스 내부에 고유 진단 소스를 선언합니다.
-    private static readonly DiagnosticSource _diagnosticSource = new DiagnosticListener("ArqaStatic.ReportGenerator");
+    private static readonly DiagnosticSource s_diag =
+        new DiagnosticListener("ArqaStatic.ReportGenerator");
 
-    public void Generate(string path, MyData data)
+    public void Generate(string outputPath, object reportModel, string rawXml)
     {
-        // 1. 일반 로그 성격의 이벤트 발행
-        _diagnosticSource.Write("ReportStarted", new { Message = $"Generating report to {path}", Level = "INFO" });
-
-        // 2. 대용량 객체 덤프 및 스냅샷 이벤트 발행
-        _diagnosticSource.Write("InputDataSnapshot", new { 
-            Label = "InputData", 
-            State = data, 
-            Level = "SNAPSHOT", 
-            Scope = "Report" 
+        s_diag.Write("ReportStarted", new
+        {
+            Message = $"Generating report: {outputPath}",
+            Level = "INFO",
+            Scope = "Report"
         });
 
-        // 3. XML 등 대량 텍스트 덤프 이벤트 발행 (10KB 이상 시 자동 분리 저장됨)
-        string xmlContent = "<root>...</root>";
-        _diagnosticSource.Write("XmlDump", new { 
-            Label = "OutputXml", 
-            Xml = xmlContent, 
-            Scope = "XML_PROCESS", 
-            Level = "DUMP" 
+        s_diag.Write("ReportXmlDump", new
+        {
+            Label = "DocumentXml",
+            Xml = rawXml,
+            Level = "DUMP",
+            Scope = "Report"
         });
     }
 }
 ```
 
-### 방법 B. 정적 퍼사드 사용 (편리함: 샌드박스, 테스트 앱, 빠른 디버깅용)
-`AiDebugLogger` 클래스를 직접 호출하여 빠르게 로그를 기록합니다.
+### 4. 계측 API 요약
 
-```csharp
-using AiAgent.Diagnostics;
+| 메서드 | 주요 용도 | 페이로드 저장 방식 |
+| :--- | :--- | :--- |
+| `AiDebugLogger.Log(message, level, scope)` | 단일 실행 흐름 및 상태 메시지 기록 | `ai_debug.jsonl` 인라인 메시지 기록 |
+| `AiDebugLogger.Dump(label, obj, scope)` | 복합 객체, 예외(`Exception`), XML/JSON 원문 덤프 | 10KB 이하: 인라인 기록<br>10KB 초과: `ai_dumps/dump_<timestamp>_<label>.(json\|xml)` 분리 저장 |
+| `AiDebugLogger.BeginScope(scopeName)` | `using` 블록 구간의 시작(`START`)·종료(`END`) 및 경과 시간(`durationMs`) 측정 | `ai_debug.jsonl` 인라인 기록 |
+| `AiDebugLogger.SaveSnapshot(snapshotId, state)` | 루프 회차별 또는 상태 전이 전후의 객체 스냅샷 보존 | `Dump`와 동일 (10KB 임계치 기반 자동 분리) |
 
-// 1. 단순 텍스트 로깅
-AiDebugLogger.Log("작업을 진행 중입니다.", "INFO");
+---
 
-// 2. 성능 측정 스코프 시작 (Stopwatch 연동, Dispose 시 소요시간 자동 기록)
-using (AiDebugLogger.BeginScope("DbQueryScope"))
+## 출력 로그 스키마 (Output Schema)
+
+* **메인 로그 파일**: `<BasePath>/ai_debug.jsonl`
+* **대용량 덤프 디렉터리**: `<BasePath>/ai_dumps/`
+
+```json
 {
-    // 3. 임의 객체 직렬화 덤프 (크기에 따라 인라인 저장 혹은 ai_dumps/ 경로 저장 결정됨)
-    var queryResult = new { Count = 120, Query = "SELECT * FROM Users" };
-    AiDebugLogger.Dump("UserQueryResults", queryResult);
+  "timestamp": "2026-11-03T15:30:00.125+09:00",
+  "level": "DUMP",
+  "message": "[Offloaded] OutputXml (48210 chars). Saved to file: C:\\...\\ai_dumps\\dump_20261103_153000_125_OutputXml.xml",
+  "scope": "XML_PROCESS",
+  "durationMs": null,
+  "caller": {
+    "file": "HwpFalseAlarmReportGenerator.cs",
+    "line": 142,
+    "method": "GenerateAsync"
+  },
+  "blobPath": "C:\\...\\ai_dumps\\dump_20261103_153000_125_OutputXml.xml",
+  "data": null
 }
-
-// 4. 명시적인 상태 스냅샷 저장 (AI 에이전트 리하이드레이션 검증용)
-AiDebugLogger.SaveSnapshot("CurrentSystemState", myStateObject);
 ```
 
-## 📦 다른 프로젝트에 서브모듈로 추가하기
+---
 
-이 라이브러리는 독립 GitHub 저장소로 관리되므로, 어떤 .NET 8+ 프로젝트에도 서브모듈로 불러와 재사용할 수 있습니다.
+## 빌드 및 서브모듈 연동 (Build & Submodule Integration)
 
-```bash
-# 1. 서브모듈 등록 (프로젝트 루트에서 실행)
+### 요구 사항 (Prerequisites)
+* **SDK**: [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) 이상 (`TargetFramework: net8.0`)
+
+### 단독 빌드 및 서브모듈 추가
+```powershell
+# 1. 프로젝트 단독 빌드
+dotnet build AiAgent.Diagnostics.csproj
+
+# 2. 상위 저장소에 Git 서브모듈로 등록 시
 git submodule add https://github.com/jin20203458/AiAgent.Diagnostics.git AiAgent.Diagnostics
-
-# 2. 기존 저장소를 클론할 때 서브모듈 함께 받기
-git clone --recurse-submodules <저장소 URL>
-
-# 3. 이미 클론된 저장소에서 서브모듈 초기화
 git submodule update --init --recursive
 ```
 
-이후 사용하는 프로젝트의 `.csproj`에 아래 참조를 추가합니다.
-
+상위 프로젝트(`.csproj`) 참조 설정:
 ```xml
 <ItemGroup>
   <ProjectReference Include="..\AiAgent.Diagnostics\AiAgent.Diagnostics.csproj" />
 </ItemGroup>
 ```
-
----
-
-## 📌 핵심 API 비교 (`Log` vs `Dump`)
-
-| 구분 | `AiDebugLogger.Log` | `AiDebugLogger.Dump` |
-| :--- | :--- | :--- |
-| **기록 대상** | 짧은 텍스트 메시지 | 클래스 인스턴스, XML, JSON 등 복잡한 객체 전체 |
-| **데이터 크기** | 매우 작음 (1KB 미만) | 수 KB ~ 수 MB |
-| **저장 방식** | `ai_debug.jsonl` 내부에 텍스트로 직접 저장 | 10KB 미만: 로그에 인라인 저장 / 10KB 초과: `ai_dumps/`에 파일 분리 |
-| **주요 용도** | 실행 흐름 및 단계 기록 | 버그 시점의 데이터 상태 전체 촬영 |
-
----
-
-## 🤖 AI 에이전트를 위한 디버깅 가이드 (Prompting)
-
-AI 에이전트와 페어 프로그래밍을 하거나 자율 디버깅을 시킬 때, 아래의 디버깅 프로토콜을 에이전트에게 지시하여 활용하게 하세요.
-
-> **[AI 에이전트 전용 디버깅 지침]**
-> 
-> 이 프로젝트에는 고성능 비침투적 관찰(Observability) 파이프라인인 `AiAgent.Diagnostics`가 탑재되어 있습니다. 분석 및 디버깅 작업을 진행할 때는 아래 2단계의 프로토콜을 준수하세요.
-> 
-> **1단계: 진단 코드 삽입 (Instrumentation)**
-> * 분석하려는 버그 의심 구역의 주요 데이터 흐름 및 분기점 전후에 아래 함수를 삽입하세요.
-> * **비즈니스 프로젝트 파일 수정 시**: 클래스 내부에 `private static readonly DiagnosticSource _diagnosticSource = new DiagnosticListener("이름");`을 정의하고 `_diagnosticSource.Write(...)` 형태로 이벤트를 비침투적으로 발행하세요.
-> * **스크립트 및 임시 테스트 코드 수정 시**: 아래 함수를 직접 사용하여 빠르게 추적하세요.
-> 
-> | 상황 | 사용 함수 | 예시 |
-> | :--- | :--- | :--- |
-> | 특정 변수나 객체의 상태를 파일로 뽑아보고 싶을 때 **(가장 자주 사용)** | `AiDebugLogger.Dump("라벨", 변수)` | `AiDebugLogger.Dump("OrderData", order);` |
-> | 실행 흐름 단계를 한 줄로 기록하고 싶을 때 | `AiDebugLogger.Log("메시지")` | `AiDebugLogger.Log("결제 시작됨", "INFO");` |
-> | 특정 구간의 소요 시간(성능 병목)을 측정하고 싶을 때 | `using (AiDebugLogger.BeginScope("이름"))` | `using (AiDebugLogger.BeginScope("ParsePhase")) { ... }` |
-> | 반복문 내 매 회차 상태 변화를 기록하고 싶을 때 | `AiDebugLogger.SaveSnapshot("라벨_인덱스", 객체)` | `AiDebugLogger.SaveSnapshot($"TableState_{i}", table);` |
-> | try-catch 내에서 예외 세부 정보를 안전하게 기록하고 싶을 때 | `AiDebugLogger.Dump("라벨", ex)` | `catch (Exception ex) { AiDebugLogger.Dump("ApiError", ex); }` |
-> 
-> **2단계: 수집 결과 확인 및 분석 (Collection & Analysis)**
-> * 코드를 빌드하고 실행(혹은 테스트)한 후, 프로젝트 루트에 누적되는 `ai_debug.jsonl` 파일과 `ai_dumps/` 폴더를 확인하여 로그를 수집하세요.
-> * `ai_debug.jsonl` 내부 로그 객체에는 호출 파일명, 라인 번호, 메서드명이 포함된 `caller` 필드가 제공되므로 이를 활용해 의심 지점의 코드로 바로 이동하여 분석하세요.
-> * 데이터 덤프 중 크기가 10KB를 초과하는 객체나 XML/JSON 조각은 가독성을 위해 외부 파일로 분리 정렬되어 `blobPath` 필드에 연결되어 있습니다. `ai_dumps/` 아래의 해당 덤프 파일을 직접 읽고 변환 전후 상태를 교차 분석하세요.
-> * **디버깅이 완료된 후, 임시로 삽입한 진단 코드는 반드시 제거하고 커밋하세요.**
-
