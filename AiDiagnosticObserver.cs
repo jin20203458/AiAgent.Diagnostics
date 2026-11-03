@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Reflection;
 
@@ -14,10 +15,21 @@ namespace AiAgent.Diagnostics
         /// 전역 <see cref="DiagnosticListener.AllListeners"/> 구독 핸들입니다.
         /// </summary>
         private static IDisposable? _allListenersSubscription;
+
         /// <summary>
         /// 활성화된 개별 리스너 구독 핸들들을 보관하는 스레드 안전 컬렉션입니다.
         /// </summary>
         private static readonly ConcurrentBag<IDisposable> _subscriptions = new ConcurrentBag<IDisposable>();
+
+        /// <summary>
+        /// 구독할 <see cref="DiagnosticListener"/> 이름 접두사 목록을 가져옵니다.
+        /// 기본값으로 <c>"ArqaStatic"</c> 및 <c>"AiAgent.Diagnostics"</c>가 등록되어 있으며, 호스트 애플리케이션에서 접두사를 추가할 수 있습니다.
+        /// </summary>
+        public static IList<string> SubscribedPrefixes { get; } = new List<string>
+        {
+            "ArqaStatic",
+            "AiAgent.Diagnostics"
+        };
 
         /// <summary>
         /// 전역 <see cref="DiagnosticListener.AllListeners"/>에 진단 옵저버를 등록합니다.
@@ -56,24 +68,27 @@ namespace AiAgent.Diagnostics
         public void OnError(Exception error) { }
 
         /// <summary>
-        /// 새로운 <see cref="DiagnosticListener"/>가 감지되었을 때 호출되며, 대상 네임스페이스와 일치하면 내부 이벤트 옵저버를 구독합니다.
+        /// 새로운 <see cref="DiagnosticListener"/>가 감지되었을 때 호출되며, <see cref="SubscribedPrefixes"/>와 일치하면 내부 이벤트 옵저버를 구독합니다.
         /// </summary>
         /// <param name="value">감지된 <see cref="DiagnosticListener"/> 인스턴스입니다.</param>
         public void OnNext(DiagnosticListener value)
         {
-            // Subscribe to listeners starting with "ArqaStatic" or "AiAgent.Diagnostics"
-            if (value.Name.StartsWith("ArqaStatic", StringComparison.OrdinalIgnoreCase) ||
-                value.Name.StartsWith("AiAgent.Diagnostics", StringComparison.OrdinalIgnoreCase))
+            foreach (string prefix in SubscribedPrefixes)
             {
-                var subscription = value.Subscribe(new InnerEventObserver(value.Name));
-                _subscriptions.Add(subscription);
+                if (!string.IsNullOrEmpty(prefix) &&
+                    value.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    var subscription = value.Subscribe(new InnerEventObserver(value.Name));
+                    _subscriptions.Add(subscription);
+                    break;
+                }
             }
         }
 
         /// <summary>
         /// 개별 <see cref="DiagnosticListener"/>에서 발행하는 키-값 이벤트 스트림을 수신하여 <see cref="AiDiagnosticEvent"/>로 변환하는 내부 옵저버 클래스입니다.
         /// </summary>
-        private class InnerEventObserver : IObserver<System.Collections.Generic.KeyValuePair<string, object?>>
+        private class InnerEventObserver : IObserver<KeyValuePair<string, object?>>
         {
             /// <summary>
             /// 현재 구독 중인 <see cref="DiagnosticListener"/>의 이름입니다.
@@ -104,7 +119,7 @@ namespace AiAgent.Diagnostics
             /// 수신된 키-값 이벤트 객체에서 리플렉션으로 속성을 추출하여 진단 채널 큐에 적재합니다.
             /// </summary>
             /// <param name="value">이벤트 이름과 페이로드 객체로 구성된 키-값 쌍입니다.</param>
-            public void OnNext(System.Collections.Generic.KeyValuePair<string, object?> value)
+            public void OnNext(KeyValuePair<string, object?> value)
             {
                 try
                 {
@@ -120,7 +135,6 @@ namespace AiAgent.Diagnostics
                         Scope = _listenerName
                     };
 
-                    // Extract properties from anonymous or structured payload objects
                     Type type = payload.GetType();
                     
                     ev.Message = TryGetProperty<string>(payload, type, "Message", "message") ?? eventName;
@@ -137,7 +151,6 @@ namespace AiAgent.Diagnostics
                     ev.CallerLine = TryGetProperty<int>(payload, type, "CallerLine", "callerLine");
                     ev.CallerMethod = TryGetProperty<string>(payload, type, "CallerMethod", "callerMethod");
 
-                    // Try to find payload and label
                     ev.Payload = TryGetProperty<object>(payload, type, "Payload", "payload", "Xml", "xml", "State", "state", "Obj", "obj");
                     ev.PayloadLabel = TryGetProperty<string>(payload, type, "PayloadLabel", "payloadLabel", "Label", "label", "SnapshotId", "snapshotId");
 
@@ -171,7 +184,6 @@ namespace AiAgent.Diagnostics
                             {
                                 return typedVal;
                             }
-                            // Convert type if possible (e.g. int to long or nullables)
                             if (val != null)
                             {
                                 return (T)Convert.ChangeType(val, Nullable.GetUnderlyingType(typeof(T)) ?? typeof(T));
