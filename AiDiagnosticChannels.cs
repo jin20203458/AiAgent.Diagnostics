@@ -10,6 +10,9 @@ using System.Xml.Linq;
 
 namespace AiAgent.Diagnostics
 {
+    /// <summary>
+    /// <see cref="Channel{T}"/> 기반으로 진단 이벤트를 비동기 큐잉하고 JSONL 파일 및 외부 덤프 파일로 직렬화하여 기록하는 정적 클래스입니다.
+    /// </summary>
     public static class AiDiagnosticChannels
     {
         private static readonly Channel<AiDiagnosticEvent> _channel = Channel.CreateUnbounded<AiDiagnosticEvent>(
@@ -22,6 +25,9 @@ namespace AiAgent.Diagnostics
         private static CancellationTokenSource? _cts;
         private static bool _isStarted = false;
 
+        /// <summary>
+        /// 백그라운드 진단 이벤트 소비 워커 태스크를 시작합니다.
+        /// </summary>
         public static void Start()
         {
             lock (_channel)
@@ -33,11 +39,19 @@ namespace AiAgent.Diagnostics
             }
         }
 
+        /// <summary>
+        /// 진단 이벤트를 비동기 채널 큐에 추가합니다.
+        /// </summary>
+        /// <param name="ev">큐에 추가할 <see cref="AiDiagnosticEvent"/> 인스턴스입니다.</param>
         public static void Enqueue(AiDiagnosticEvent ev)
         {
             _channel.Writer.TryWrite(ev);
         }
 
+        /// <summary>
+        /// 채널 입력을 닫고 잔여 이벤트를 처리한 후 백그라운드 워커를 안전하게 중지합니다.
+        /// </summary>
+        /// <returns>비동기 중지 작업을 나타내는 <see cref="Task"/>입니다.</returns>
         public static async Task StopAsync()
         {
             CancellationTokenSource? localCts = null;
@@ -76,6 +90,11 @@ namespace AiAgent.Diagnostics
             }
         }
 
+        /// <summary>
+        /// 취소 요청이 발생할 때까지 채널에서 이벤트를 지속적으로 읽어와 처리합니다.
+        /// </summary>
+        /// <param name="ct">작업 취소 토큰입니다.</param>
+        /// <returns>비동기 큐 처리 작업을 나타내는 <see cref="Task"/>입니다.</returns>
         private static async Task ProcessQueueAsync(CancellationToken ct)
         {
             while (await _channel.Reader.WaitToReadAsync(ct).ConfigureAwait(false))
@@ -94,6 +113,11 @@ namespace AiAgent.Diagnostics
             }
         }
 
+        /// <summary>
+        /// 단일 진단 이벤트를 직렬화하여 로그 파일에 기록하고, 10KB를 초과하는 대용량 페이로드는 별도 덤프 파일로 분리 저장합니다.
+        /// </summary>
+        /// <param name="ev">처리할 진단 이벤트입니다.</param>
+        /// <returns>비동기 이벤트 처리 작업을 나타내는 <see cref="Task"/>입니다.</returns>
         private static async Task ProcessEventAsync(AiDiagnosticEvent ev)
         {
             string? blobPath = null;
@@ -198,6 +222,11 @@ namespace AiAgent.Diagnostics
             }
         }
 
+        /// <summary>
+        /// 파일 이름에 사용할 수 없는 문자를 밑줄(<c>_</c>)로 치환합니다.
+        /// </summary>
+        /// <param name="name">원본 파일 이름 문자열입니다.</param>
+        /// <returns>안전하게 정제된 파일 이름 문자열입니다.</returns>
         private static string SanitizeFileName(string name)
         {
             string invalidChars = Regex.Escape(new string(Path.GetInvalidFileNameChars()));
